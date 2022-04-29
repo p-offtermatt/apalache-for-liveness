@@ -1,4 +1,4 @@
-------------------------------- MODULE EWD998_buchi -------------------------------
+------------------------------- MODULE EWD998_buchiFast -------------------------------
 (***************************************************************************)
 (* TLA+ specification of an algorithm for distributed termination          *)
 (* detection on a ring, due to Shmuel Safra, published as EWD 998:         *)
@@ -27,8 +27,6 @@ VARIABLES
   token,       \* token structure
   \* @type: Bool;
   InLoop,
-  \* @type: Bool;
-  PrevInLoop,
 
   (* loop variables *)
   \* @type: Int -> Bool;
@@ -52,7 +50,10 @@ VARIABLES
   loop_buchi_state,
 
   \* @type: Bool;
-  buchi_acceptingSeen
+  buchi_acceptingSeen,
+
+  \* @type: Bool;
+  PrevInLoop
 
 
 
@@ -65,7 +66,6 @@ TypeOK ==
   /\ counter \in [Node -> Int]
   /\ pending \in [Node -> Nat]
   /\ token \in Token
-
 
 \* @type: Int => Bool;
 PassTokenEnabled(i) ==
@@ -200,25 +200,23 @@ TerminationDetection ==
 (**************************************************************************)
 
 LoopNext ==
-  /\  PrevInLoop' = InLoop
-  /\  \/  /\ ~InLoop
-          /\ InLoop' = TRUE
-          /\ loop_vars' = vars'
-          /\ loop_buchi_state' = buchi_state'
-      \/  UNCHANGED << InLoop, loop_vars, loop_buchi_state >>
+  /\ InLoop' \in {TRUE, FALSE}
+  /\ loop_active' \in {loop_active, active'}
+  /\ loop_color' \in {loop_color, color'}
+  /\ loop_counter' \in {loop_counter, counter'}
+  /\ loop_pending' \in {loop_pending, pending'}
+  /\ loop_token' \in {loop_token, token'}
+  /\ loop_buchi_state' \in {loop_buchi_state, buchi_state'}
+  /\ (~InLoop /\ InLoop') => (loop_vars' = vars' /\ loop_buchi_state' = buchi_state')
+  /\ (InLoop = InLoop') => (loop_vars' = loop_vars /\ loop_buchi_state' = loop_buchi_state)
+  /\ (InLoop) => (InLoop')
+  /\ PrevInLoop' = InLoop
 
-
-BuchiNext == \* buchi_state' \in {0, 1, -1} /\ (buchi_state' = 0 => ...) 
-  \/  /\ buchi_state = 0 
-      /\ buchi_state' := 0
-  \/  /\ buchi_state = 0 
-      /\ Termination
-      /\ ~terminationDetected
-      /\ buchi_state' := 1
-  \/  /\ buchi_state = 1
-      /\ ~terminationDetected
-      /\ buchi_state' := 1
-  \/ buchi_state' := -1
+BuchiNext ==
+  /\ buchi_state' \in {0,1,-1}
+  /\ (buchi_state' = 1) =>  \/ (buchi_state = 0 /\ Termination /\ ~terminationDetected)
+                            \/ (buchi_state = 1 /\ ~terminationDetected)
+  /\ (buchi_state' = 0) => (buchi_state = 0)
 
 AuxNext ==
   /\ loop_fair' := (loop_fair /\ (~InLoop' \/ ~SystemEnabled'))
@@ -269,19 +267,19 @@ Inv ==
 
 \* @type: Bool;
 LoopOK ==
-  /\ InLoop
-  /\ PrevInLoop
+  /\ InLoop /\ PrevInLoop
   /\ loop_active = active
   /\ loop_color = color
   /\ loop_counter = counter
   /\ loop_pending = pending
   /\ loop_token = token
+  /\ loop_buchi_state = buchi_state
 
 LoopFair ==
   loop_fair
 
 Property ==
-  LoopOK /\ LoopFair => ~Termination 
+  LoopOK /\ LoopFair => ~Termination
 
 Liveness ==
   [](Termination => <>terminationDetected)
