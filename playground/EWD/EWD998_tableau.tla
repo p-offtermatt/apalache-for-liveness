@@ -1,4 +1,4 @@
-------------------------------- MODULE EWD998 -------------------------------
+------------------------------- MODULE EWD998_tableau -------------------------------
 (***************************************************************************)
 (* TLA+ specification of an algorithm for distributed termination          *)
 (* detection on a ring, due to Shmuel Safra, published as EWD 998:         *)
@@ -51,9 +51,33 @@ VARIABLES
  Formula_Inner_Right,
 
  \* @type: Bool;
- Formula_Inner_Right_Finally
+ Formula_Inner_Right_Finally,
+
+ (* Loop Formula variables *)
+ \* @type: Bool;
+ Loop_Formula,
+
+ \* @type: Bool;
+ Loop_Formula_Inner,
+
+ \* @type: Bool;
+ Loop_Formula_Inner_Right,
+
+ \* @type: Bool;
+ Loop_Formula_Inner_Right_Finally,
+
+ (* Initial formula value *)
+ \* @type: Bool;
+ Init_Formula
 
 vars == <<active, color, counter, pending, token>>
+loop_vars == <<loop_active, loop_color, loop_counter, loop_pending, loop_token>>
+
+ \* @type: <<Bool, Bool, Bool, Bool>>;
+predicate_vars == <<Formula, Formula_Inner, Formula_Inner_Right, Formula_Inner_Right_Finally>>
+
+ \* @type: <<Bool, Bool, Bool, Bool>>;
+Loop_predicate_vars == <<Loop_Formula, Loop_Formula_Inner, Loop_Formula_Inner_Right, Loop_Formula_Inner_Right_Finally>>
 
 TypeOK ==
   /\ active \in [Node -> BOOLEAN]
@@ -62,7 +86,33 @@ TypeOK ==
   /\ pending \in [Node -> Nat]
   /\ token \in Token
 
+(***************************************************************************)
+(* Main safety property: if there is a white token at node 0 and there are *)
+(* no in-flight messages then every node is inactive.                      *)
+(***************************************************************************)
+terminationDetected ==
+  /\ token.pos = 0
+  /\ token.color = "white"
+  /\ token.q + counter[0] = 0
+  /\ color[0] = "white"
+  /\ ~ active[0]
+  /\ pending[0] = 0
 
+(***************************************************************************)
+(* The number of messages on their way. "in-flight"                        *)
+(***************************************************************************)
+Plus(a, b) == a + b
+B == FoldFunction(Plus, 0, pending)
+
+(***************************************************************************)
+(* The system has terminated if no node is active and there are no         *)
+(* in-flight messages.                                                     *)
+(***************************************************************************)
+Termination == 
+  /\ \A i \in Node : ~ active[i]
+  /\ B = 0
+
+(* Predicates *)
 
 Predicate_IR ==
   Formula_Inner_Right <=> \/ terminationDetected
@@ -72,15 +122,38 @@ Predicate_IRF ==
   Formula_Inner_Right_Finally' <=>  \/ Formula_Inner_Right_Finally 
                                     \/ (InLoop' /\ terminationDetected')
 
-Formula_I ==
-  Formula_Inner' <=> ~Termination' \/ Formula_IR'
+Predicate_I ==
+  Formula_Inner' <=> ~Termination' \/ Formula_Inner_Right'
 
-Formula_ ==
-  Formula <=> /\ Formula_I 
+Predicate ==
+  Formula <=> /\ Formula_Inner 
               /\ Formula'
+
+PredicateNext ==
+  /\ Formula' \in {TRUE, FALSE}
+  /\ Formula_Inner' \in {TRUE, FALSE}
+  /\ Formula_Inner_Right' \in {TRUE, FALSE}
+  /\ Formula_Inner_Right_Finally' \in {TRUE, FALSE}
+  /\ Predicate_IR
+  /\ Predicate_IRF
+  /\ Predicate_I
+  /\ Predicate
+  /\ UNCHANGED << Init_Formula >>
+
+PredicateInit ==
+  /\ Formula \in {TRUE, FALSE}
+  /\ Formula_Inner \in {TRUE, FALSE}
+  /\ Formula_Inner_Right \in {TRUE, FALSE}
+  /\ Formula_Inner_Right_Finally \in {TRUE, FALSE}
+  /\ Init_Formula = Formula
     
 ------------------------------------------------------------------------------
- 
+
+LoopInit ==
+  /\ loop_vars = vars
+  /\ Loop_predicate_vars = predicate_vars
+  /\ InLoop = FALSE
+
 Init ==
   (* EWD840 but nodes *) 
   /\ active \in [Node -> BOOLEAN]
@@ -89,6 +162,8 @@ Init ==
   /\ counter = [i \in Node |-> 0] \* c properly initialized
   /\ pending = [i \in Node |-> 0]
   /\ token = [pos |-> 0, q |-> 0, color |-> "black"]
+  /\ PredicateInit
+  /\ LoopInit
 
 InitiateProbe ==
   (* Rules 1 + 5 + 6 *)
@@ -162,11 +237,42 @@ Deactivate(i) ==
 
 Environment == \E i \in Node : SendMsg(i) \/ RecvMsg(i) \/ Deactivate(i)
 
-Plus(a, b) == a + b
-
 -----------------------------------------------------------------------------
 
-Next == (System \/ Environment)
+EndRun ==
+  /\ InLoop 
+  /\ loop_vars = vars
+  /\ UNCHANGED << loop_vars, vars, InLoop, Loop_predicate_vars >>
+  /\ PredicateNext
+  /\ Formula' <=> Loop_Formula
+  /\ Formula_Inner' <=> Loop_Formula_Inner
+  /\ Formula_Inner_Right' <=> Loop_Formula_Inner_Right
+  /\ Formula_Inner_Right_Finally' <=> Loop_Formula_Inner_Right_Finally
+
+LoopNext ==
+  \* data nondeterminism
+  /\ InLoop' \in {TRUE, FALSE}
+  /\ loop_active' \in {loop_active, active}
+  /\ loop_color' \in {loop_color, color}
+  /\ loop_counter' \in {loop_counter, counter}
+  /\ loop_pending' \in {loop_pending, pending}
+  /\ loop_token' \in {loop_token, token}
+  /\ Loop_Formula' \in {Loop_Formula, Formula}
+  /\ Loop_Formula_Inner' \in {Loop_Formula_Inner, Formula_Inner}
+  /\ Loop_Formula_Inner_Right' \in {Loop_Formula_Inner_Right, Formula_Inner_Right}
+  /\ Loop_Formula_Inner_Right_Finally' \in {Loop_Formula_Inner_Right_Finally, Formula_Inner_Right_Finally}
+  \* conditions for assignments
+  /\ (InLoop => InLoop')
+  /\ (InLoop' # InLoop) =>  /\ loop_vars' = vars 
+                            /\ Loop_predicate_vars' = predicate_vars
+  /\ (InLoop' = InLoop) =>  /\ loop_vars' = loop_vars
+                            /\ Loop_predicate_vars' = Loop_predicate_vars
+
+Next == 
+  \/  /\ (System \/ Environment) \/ UNCHANGED << vars >>
+      /\ LoopNext
+      /\ PredicateNext
+  \/ EndRun
 
 Spec == Init /\ [][Next]_vars /\ WF_vars(System)
 
@@ -180,31 +286,6 @@ StateConstraint ==
   /\ token.q <= 9
 
 -----------------------------------------------------------------------------
-
-(***************************************************************************)
-(* Main safety property: if there is a white token at node 0 and there are *)
-(* no in-flight messages then every node is inactive.                      *)
-(***************************************************************************)
-terminationDetected ==
-  /\ token.pos = 0
-  /\ token.color = "white"
-  /\ token.q + counter[0] = 0
-  /\ color[0] = "white"
-  /\ ~ active[0]
-  /\ pending[0] = 0
-
-(***************************************************************************)
-(* The number of messages on their way. "in-flight"                        *)
-(***************************************************************************)
-B == FoldFunction(Plus, 0, pending)
-
-(***************************************************************************)
-(* The system has terminated if no node is active and there are no         *)
-(* in-flight messages.                                                     *)
-(***************************************************************************)
-Termination == 
-  /\ \A i \in Node : ~ active[i]
-  /\ B = 0
 
 TerminationDetection ==
   terminationDetected => Termination
@@ -234,6 +315,12 @@ Inv ==
 Liveness ==
   [](~Termination \/ <>terminationDetected)
 
+LoopOK ==
+    loop_vars = vars
+
+FinallyOK ==
+    LoopOK => 
+        (Formula_Inner_Right => Formula_Inner_Right_Finally)
 
 (***************************************************************************)
 (* The algorithm implements the specification of termination detection     *)
