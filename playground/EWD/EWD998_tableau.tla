@@ -53,6 +53,9 @@ VARIABLES
  \* @type: Bool;
  Formula_Inner_Right_Finally,
 
+ \* @type: Bool;
+ Formula_Globally,
+
  (* Loop Formula variables *)
  \* @type: Bool;
  Loop_Formula,
@@ -65,6 +68,11 @@ VARIABLES
 
  \* @type: Bool;
  Loop_Formula_Inner_Right_Finally,
+ \* @type: Bool;
+ Loop_Formula_Globally,
+
+ \* @type: Bool;
+ LoopFair,
 
  (* Initial formula value *)
  \* @type: Bool;
@@ -73,11 +81,11 @@ VARIABLES
 vars == <<active, color, counter, pending, token>>
 loop_vars == <<loop_active, loop_color, loop_counter, loop_pending, loop_token>>
 
- \* @type: <<Bool, Bool, Bool, Bool>>;
-predicate_vars == <<Formula, Formula_Inner, Formula_Inner_Right, Formula_Inner_Right_Finally>>
+ \* @type: <<Bool, Bool, Bool, Bool, Bool>>;
+predicate_vars == <<Formula, Formula_Inner, Formula_Inner_Right, Formula_Inner_Right_Finally, Formula_Globally>>
 
- \* @type: <<Bool, Bool, Bool, Bool>>;
-Loop_predicate_vars == <<Loop_Formula, Loop_Formula_Inner, Loop_Formula_Inner_Right, Loop_Formula_Inner_Right_Finally>>
+ \* @type: <<Bool, Bool, Bool, Bool, Bool>>;
+Loop_predicate_vars == <<Loop_Formula, Loop_Formula_Inner, Loop_Formula_Inner_Right, Loop_Formula_Inner_Right_Finally, Loop_Formula_Globally>>
 
 TypeOK ==
   /\ active \in [Node -> BOOLEAN]
@@ -118,6 +126,11 @@ Predicate_IR ==
   Formula_Inner_Right <=> \/ terminationDetected
                           \/ Formula_Inner_Right'
 
+Predicate_G ==
+  Formula_Globally' <=> /\ Formula_Globally
+                        /\ (~InLoop' \/ Formula_Inner')
+  
+
 Predicate_IRF ==
   Formula_Inner_Right_Finally' <=>  \/ Formula_Inner_Right_Finally 
                                     \/ (InLoop' /\ terminationDetected')
@@ -126,7 +139,7 @@ Predicate_I ==
   Formula_Inner' <=> ~Termination' \/ Formula_Inner_Right'
 
 Predicate ==
-  Formula <=> /\ Formula_Inner 
+  Formula <=> /\ Formula_Inner
               /\ Formula'
 
 PredicateNext ==
@@ -134,8 +147,10 @@ PredicateNext ==
   /\ Formula_Inner' \in {TRUE, FALSE}
   /\ Formula_Inner_Right' \in {TRUE, FALSE}
   /\ Formula_Inner_Right_Finally' \in {TRUE, FALSE}
+  /\ Formula_Globally' \in {TRUE, FALSE}
   /\ Predicate_IR
   /\ Predicate_IRF
+  /\ Predicate_G
   /\ Predicate_I
   /\ Predicate
   /\ UNCHANGED << Init_Formula >>
@@ -144,8 +159,10 @@ PredicateInit ==
   /\ Formula \in {TRUE, FALSE}
   /\ Formula_Inner \in {TRUE, FALSE}
   /\ Formula_Inner_Right \in {TRUE, FALSE}
-  /\ Formula_Inner_Right_Finally \in {TRUE, FALSE}
+  /\ Formula_Inner_Right_Finally = FALSE
+  /\ Formula_Globally = TRUE
   /\ Init_Formula = Formula
+  /\ Formula_Inner <=> (~Termination \/ Formula_Inner_Right)
     
 ------------------------------------------------------------------------------
 
@@ -153,6 +170,9 @@ LoopInit ==
   /\ loop_vars = vars
   /\ Loop_predicate_vars = predicate_vars
   /\ InLoop = FALSE
+
+FairnessInit ==
+  LoopFair = TRUE
 
 Init ==
   (* EWD840 but nodes *) 
@@ -164,6 +184,7 @@ Init ==
   /\ token = [pos |-> 0, q |-> 0, color |-> "black"]
   /\ PredicateInit
   /\ LoopInit
+  /\ FairnessInit
 
 InitiateProbe ==
   (* Rules 1 + 5 + 6 *)
@@ -239,15 +260,8 @@ Environment == \E i \in Node : SendMsg(i) \/ RecvMsg(i) \/ Deactivate(i)
 
 -----------------------------------------------------------------------------
 
-EndRun ==
-  /\ InLoop 
-  /\ loop_vars = vars
-  /\ UNCHANGED << loop_vars, vars, InLoop, Loop_predicate_vars >>
-  /\ PredicateNext
-  /\ Formula' <=> Loop_Formula
-  /\ Formula_Inner' <=> Loop_Formula_Inner
-  /\ Formula_Inner_Right' <=> Loop_Formula_Inner_Right
-  /\ Formula_Inner_Right_Finally' <=> Loop_Formula_Inner_Right_Finally
+FairnessNext ==
+  LoopFair' = (LoopFair /\ (~InLoop' \/ ~SystemEnabled))
 
 LoopNext ==
   \* data nondeterminism
@@ -261,6 +275,7 @@ LoopNext ==
   /\ Loop_Formula_Inner' \in {Loop_Formula_Inner, Formula_Inner}
   /\ Loop_Formula_Inner_Right' \in {Loop_Formula_Inner_Right, Formula_Inner_Right}
   /\ Loop_Formula_Inner_Right_Finally' \in {Loop_Formula_Inner_Right_Finally, Formula_Inner_Right_Finally}
+  /\ Loop_Formula_Globally' \in {Loop_Formula_Globally, Formula_Globally}
   \* conditions for assignments
   /\ (InLoop => InLoop')
   /\ (InLoop' # InLoop) =>  /\ loop_vars' = vars 
@@ -269,10 +284,10 @@ LoopNext ==
                             /\ Loop_predicate_vars' = Loop_predicate_vars
 
 Next == 
-  \/  /\ (System \/ Environment) \/ UNCHANGED << vars >>
-      /\ LoopNext
-      /\ PredicateNext
-  \/ EndRun
+  /\ (System \/ Environment) \/ UNCHANGED << vars >>
+  /\ LoopNext
+  /\ PredicateNext
+  /\ FairnessNext
 
 Spec == Init /\ [][Next]_vars /\ WF_vars(System)
 
@@ -315,12 +330,30 @@ Inv ==
 Liveness ==
   [](~Termination \/ <>terminationDetected)
 
-LoopOK ==
-    loop_vars = vars
-
 FinallyOK ==
-    LoopOK => 
-        (Formula_Inner_Right => Formula_Inner_Right_Finally)
+  /\ (Formula_Inner_Right => Formula_Inner_Right_Finally)
+
+GloballyOK ==
+  /\ Formula_Globally => Formula
+
+PredicatesOK ==
+  /\ Formula <=> Loop_Formula
+  /\ Formula_Inner <=> Loop_Formula_Inner
+  /\ Formula_Inner_Right <=> Loop_Formula_Inner_Right
+  /\ FinallyOK
+  /\ GloballyOK
+
+LoopOK ==
+    /\ InLoop
+    /\ loop_vars = vars
+    /\ PredicatesOK
+    /\ LoopFair
+
+Property ==
+  \* ~terminationDetected
+  LoopOK => Init_Formula
+
+
 
 (***************************************************************************)
 (* The algorithm implements the specification of termination detection     *)
