@@ -188,7 +188,16 @@ Next ==
 
 Finally, we need to ensure that any loop we detect
 has at least two states, since a loop with a single state implicitly lets the Buchi state stutter.
+We can add an additional auxiliary variable to detect this which is set to true one step after the loop has started.
+
+### Tableau encoding
+
+The tableau encoding is explained in Section 3.2 of [linear encodings of bounded ltl][].
+
+There is one major subtlety. The paper assumes that loops need at least one transition, since they don't consider implicit stuttering.
+We can do the same by, similar to the last section, allowing stuttering explicitly, at the cost of adding an extra transition.
 
 ### To be continued...
 
 [the PDR on temporal encodings]: 017pdr-temporal.md
+[linear encodings of bounded ltl]: https://lmcs.episciences.org/2236
