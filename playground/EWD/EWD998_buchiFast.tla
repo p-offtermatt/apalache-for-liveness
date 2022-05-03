@@ -279,7 +279,7 @@ LoopFair ==
   loop_fair
 
 Property ==
-  LoopOK /\ LoopFair => ~Termination
+  LoopOK /\ LoopFair => ~buchi_acceptingSeen
 
 Liveness ==
   [](Termination => <>terminationDetected)
